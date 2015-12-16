@@ -98,6 +98,7 @@
              (if str
                  (progn
                    (format t "wait shell success~%")
+                   (sleep 1)
                    (return str))
                  (progn
                    (setq timeout (- timeout 1))
@@ -133,6 +134,40 @@
         (format t "no shell found~%")
         (return-from run nil)))))
 
+(defun serial-run (serial comm result fail-result repeat)
+  (loop while (>= repeat 0)
+        do
+           (serial-log-clear)
+           (let ((r (serial-run-program serial comm result fail-result)))
+             (if r
+                 (progn
+                   (serial-log-clear)
+                   (return r)))
+             (setq repeat (- repeat 1)))
+        ))
+
+(defun serial-run-wait (serial comm result fail-result)
+  (when (wait-shell serial "" 10)
+    (serial-log-clear)
+    (serial-force-output serial comm)
+    (sleep 2)
+    (loop while t
+          do
+             (let ((s (serial-log-search result))
+                   (f (serial-log-search fail-result)))
+               (if f
+                   (progn
+                     (format t "failed,run second~%")
+                     (serial-log-clear)
+                     (serial-force-output serial comm)
+                     (sleep 2))
+                   (if s
+                       (progn
+                         (format t "wait ~a success~%" result)
+                         (return s))))
+               )
+          )))
+
 (defun power-callback (serial str result fail-result)
   (format t "Machine shut down~%"))
 
@@ -147,40 +182,41 @@
     (setq *wdt-reset* t)
     (format t "wdt reset found~%")))
 
-(defun serial-run (serial comm result fail-result repeat)
-  (loop while (>= repeat 0)
-        do
-           (serial-log-clear)
-           (let ((r (serial-run-program serial comm result fail-result)))
-             (if r
-                 (progn
-                   (serial-log-clear)
-                   (return r)))
-             (setq repeat (- repeat 1)))
-        ))
-
 (defun bootfinish-callback (serial str result fail-result)
   (format t "Machine shell start~%")
   (serial-run serial "su" "shell@gladiator:/ #" "shell@gladiator:/ $" 60)
   (serial-run serial "getprop | grep dev.bootcomplete" result fail-result 60)
   (format t "Now do reboot machine~%")
-  (serial-force-output serial "svc power shutdown")
-  (serial-run serial "svc power shutdown" "Emergency Remount" "shell@gladiator:/ #" 0))
+  (serial-run-wait serial "svc power shutdown" "" "shell@gladiator:/ #"))
+
+(defun mboot-callback (serial str result fail-result)
+  (serial-force-output serial "reset"))
 
 (defvar *list-command*
   (list
    (cons (list "Power down" "Power down" nil) 'power-callback)
+   (cons (list "<< MStar >>#" "<< MStar >>#" nil) 'mboot-callback)
    (cons (list "Booting Linux" "Booting Linux" nil) 'startup-callback)
    (cons (list "wdt_reset = "  "wdt_reset = 0" "wdt_reset = 1") 'wdt-detect)
    (cons (list "shell@gladiator:/ " "[dev.bootcomplete]: [1]" "1|shell@gladiator:/ #") 'bootfinish-callback)
    ))
 
+;; (setq *list-command* (list
+;;    (cons (list "Power down" "Power down" nil) 'power-callback)
+;;    (cons (list "<< MStar >>#" "<< MStar >>#" nil) 'mboot-callback)
+;;    (cons (list "Booting Linux" "Booting Linux" nil) 'startup-callback)
+;;    (cons (list "wdt_reset = "  "wdt_reset = 0" "wdt_reset = 1") 'wdt-detect)
+;;    (cons (list "shell@gladiator:/ " "[dev.bootcomplete]: [1]" "1|shell@gladiator:/ #") 'bootfinish-callback)
+;;    ))
 (defvar *list-string*
-  (list  "Emergency Remount" "Restarting system" "Power down" "Booting Linux" "wdt_reset = " "shell@gladiator:/ $"
+  (list "<< MStar >>#" "Emergency Remount" "Restarting system" "Power down" "Booting Linux" "wdt_reset = " "shell@gladiator:/ $"
          "shell@gladiator:/ #" "[dev.bootcomplete]: [1]" "1|shell@gladiator:/ #"))
 
+;; (setq *list-string* (list "<< MStar >>#" "Emergency Remount" "Restarting system" "Power down" "Booting Linux" "wdt_reset = " "shell@gladiator:/ $"
+;;          "shell@gladiator:/ #" "[dev.bootcomplete]: [1]" "1|shell@gladiator:/ #"))
+
 (defvar *filter-string*
-  (list "su" "getprop" "grep"))
+  (list "su" "getprop" "grep" "svc power"))
 
 (defun serial-loop (serial)
   (let ((str (serial-log-get -1)))
