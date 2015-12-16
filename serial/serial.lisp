@@ -12,13 +12,16 @@
 (defvar *serial-input-thread* nil)
 (defvar *shell-command-list* nil)
 (defvar *serial-log* nil)
+(defvar *loop-count* nil)
+(defvar *wdt-reset* nil)
 
-
-
-(setq *serial* (ccl::make-serial-stream "/dev/ttyUSB3" :baud-rate 115200
-                                                       :char-bits 8 t
-                                        :stop-bits 1 t :termios.c_lflag #$ECHO
-                                                       :external-format (ccl::make-external-format :line-termination :CRLF)))
+(setq *loop-count* 0)
+(setq *serial* (ccl::make-serial-stream "/dev/ttyUSB3"
+                                        :baud-rate 115200
+                                        :char-bits 8 t
+                                        :flow-control :none
+                                        :stop-bits 1 t
+                                        :external-format (ccl::make-external-format :line-termination :CRLF)))
 
 (defun string-in-list (str)
   (loop for i in *list-string*
@@ -26,9 +29,16 @@
            (when (search i str :test #'char-equal)
              (return str))))
 
+(defun string-in-filter (str)
+  (loop for i in *filter-string*
+        do
+           (when (search i str :test #'char-equal)
+             (return str))))
+
 (defun read-serial (serial save-stream)
   (let ((str (read-line serial)))
     (format save-stream "~a~%" str)
+    (force-output save-stream)
     str))
 
 (defun serial-log-collect (serial)
@@ -37,9 +47,12 @@
     (loop while t
           do
              (let ((str (read-serial serial save-stream)))
-               (when (string-in-list str)
-                 (setq *serial-log* (cons str *serial-log*))
+               (when (and (string-in-list str) (not (string-in-filter str)))
+                 ;;                 (setq *serial-log* (cons str *serial-log*))
+                 (push str *serial-log*)
+                 (format t "#######")
                  (print *serial-log*)
+                 (format t "~%")
                  )))))
 
 (defun serial-log-get (timeout)
@@ -47,108 +60,155 @@
         do
            (let ((str (pop *serial-log*)))
              (if str
-               (return str)
-             (cond
-               ((> timeout 0)
-                (progn
-                  (sleep 1)
-                  (setq timeout (- timeout 1))))
-               ((= timeout 0))
-               ((< timeout 0)
-                (sleep 1))))
+                 (return str)
+                 (cond
+                   ((> timeout 0)
+                    (progn
+                      (sleep 1)
+                      (setq timeout (- timeout 1))))
+                   ((= timeout 0) (return nil))
+                   ((< timeout 0)
+                    (sleep 1))))
              )))
+
+(defun serial-log-clear()
+  (setq *serial-log* nil))
+
+(defun serial-log-search (key)
+  (block log-search
+    (loop for entry in *serial-log*
+          do
+          (when (search key entry :test #'char-equal)
+            (return-from log-search entry))
+          )))
 
 (defun serial-force-output (serial str)
   (format serial str)
-  (format t "serial force output:~a~%" str)
+  (force-output serial)
+  (sleep 0.01)
   (format serial "~%")
   (force-output serial)
+  (format t "serial output ~a~%" str)
   (sleep 1))
 
-(defun wait-shell (serial comm result fail-result timeout repeat)
-  (loop while t
+(defun wait-shell (serial comm timeout)
+  (loop while (>= timeout 0)
         do
-           (let ((str (serial-log-get timeout)))
-             (if (and  (> repeat 0) fail-result (search fail-result str :test #'char-equal))
+           (let ((str (serial-log-search "shell@gladiator:/ ")))
+             (if str
                  (progn
-                   (if comm
-                       (progn
-                         (serial-force-output serial comm)
-                         (if (> 0 repeat)
-                             (setq repeat (- repeat 1)))
-                         )))
-                 (when (search result str :test #'char-equal)
-                   (return str))))))
+                   (format t "wait shell success~%")
+                   (return str))
+                 (progn
+                   (setq timeout (- timeout 1))
+                   (serial-force-output serial comm)
+                   (sleep 1))
+                 ))))
 
-(defun shell-callback (serial result fail-result)
-  (format t "Machine shell start~%")
-  (serial-force-output serial  "su")
-  (sleep 1)
-  (wait-shell serial "su" result fail-result 5 5))
+(defun wait-result (serial result fail-result timeout)
+  (loop while (>= timeout 0)
+        do
+           (let ((s (serial-log-search result))
+                 (f (serial-log-search fail-result)))
+             (if f
+                 (progn
+                   (format t "failed~%")
+                   (return nil))
+                 (if s
+                     (progn
+                       (format t "wait ~a success~%" result)
+                       (return s))))
+             (sleep 1)
+             (setq timeout (- timeout 1))
+             )))
 
-(defun power-callback (serial result fail-result)
+(defun serial-run-program (serial comm result fail-result)
+  (block run
+  (if (wait-shell serial "" 5)
+      (progn
+        (serial-log-clear)
+        (serial-force-output serial comm)
+        (wait-result serial result fail-result 5))
+      (progn
+        (format t "no shell found~%")
+        (return-from run nil)))))
+
+(defun power-callback (serial str result fail-result)
   (format t "Machine shut down~%"))
 
 ;;  (setq *serial-input-thread*  (process-run-function "Input enter" 'input-loop *serial*))
-(defun startup-callback (serial result fail-result)
-  (format t "Machine start up~%"))
+(defun startup-callback (serial str result fail-result)
+  (setq *loop-count* (+ *loop-count* 1))
+  (format t "Machine start up ~a~%" *loop-count*)
+  (wait-shell serial "" 100))
 
-(defun wdt-detect (serial result fail-result)
-  (format t "~a ~%" result ))
+(defun wdt-detect (serial str result fail-result)
+  (when (search fail-result str :test #'char-equal)
+    (setq *wdt-reset* t)
+    (format t "wdt reset found~%")))
 
-(defun bootfinish-callback (serial result fail-result)
-  (serial-force-output serial "getprop | grep dev.bootcomplete")
-  (sleep 1)
-  (wait-shell serial "getprop | grep dev.bootcomplete" result fail-result -1 5)
+(defun serial-run (serial comm result fail-result repeat)
+  (loop while (>= repeat 0)
+        do
+           (serial-log-clear)
+           (let ((r (serial-run-program serial comm result fail-result)))
+             (if r
+                 (progn
+                   (serial-log-clear)
+                   (return r)))
+             (setq repeat (- repeat 1)))
+        ))
+
+(defun bootfinish-callback (serial str result fail-result)
+  (format t "Machine shell start~%")
+  (serial-run serial "su" "shell@gladiator:/ #" "shell@gladiator:/ $" 60)
+  (serial-run serial "getprop | grep dev.bootcomplete" result fail-result 60)
   (format t "Now do reboot machine~%")
-  (serial-force-output serial "svc power reboot")
-  (sleep 1)
-  (setq *serial-log* nil))
-
-;; (when (search "wdt_reset = "
-;;                 (wait-shell serial nil "wdt_reset = " fail-result)  :test #'char-equal)
-;;     (format t "wdt reset ~%")
-;;     )
+  (serial-force-output serial "svc power shutdown")
+  (serial-run serial "svc power shutdown" "Emergency Remount" "shell@gladiator:/ #" 0))
 
 (defvar *list-command*
   (list
    (cons (list "Power down" "Power down" nil) 'power-callback)
    (cons (list "Booting Linux" "Booting Linux" nil) 'startup-callback)
-   (cons (list "wdt_reset = "  "wdt_reset = " nil) 'wdt-detect)
-   (cons (list "shell@gladiator:/ $" "shell@gladiator:/ #" nil)  'shell-callback)
-   (cons (list "shell@gladiator:/ #" "[dev.bootcomplete]: [1]" "1|shell@gladiator:/ #") 'bootfinish-callback)
+   (cons (list "wdt_reset = "  "wdt_reset = 0" "wdt_reset = 1") 'wdt-detect)
+   (cons (list "shell@gladiator:/ " "[dev.bootcomplete]: [1]" "1|shell@gladiator:/ #") 'bootfinish-callback)
    ))
 
 (defvar *list-string*
-  (list "Power down" "Booting Linux" "wdt_reset = " "shell@gladiator:/ $"
-        "shell@gladiator:/ #" "[dev.bootcomplete]: [1]" "1|shell@gladiator:/ #"))
+  (list  "Emergency Remount" "Restarting system" "Power down" "Booting Linux" "wdt_reset = " "shell@gladiator:/ $"
+         "shell@gladiator:/ #" "[dev.bootcomplete]: [1]" "1|shell@gladiator:/ #"))
 
-;; (defun command-list (str)
-;;   (if (> (length str) 0)
-;;       (let ((default-list *list-command*))
-;;         (loop for command in *list-command*
-;;               do
-;;                  (when (search (car (car command)) str :test #'char-equal)
-;;                    (return default-list))
-;;                  (setq default-list (cdr default-list))
-;;               ))))
+(defvar *filter-string*
+  (list "su" "getprop" "grep"))
 
 (defun serial-loop (serial)
   (let ((str (serial-log-get -1)))
     (mapcar #'(lambda (list)
-                    (let ((key (car  (car list)))
-                          (result (cadr (car list)))
-                          (fail-result (caddr (car list)))
-                          (func (cdr list)))
-                      (when (search key str :test #'char-equal)
-                        (format t "serial loop command")
-                        (print list)
-                        (format t "~%")
-                        (funcall func serial result fail-result)))) *list-command*)))
+                (let ((key (car  (car list)))
+                      (result (cadr (car list)))
+                      (fail-result (caddr (car list)))
+                      (func (cdr list)))
+                  (when (search key str :test #'char-equal)
+                    (format t "serial loop command")
+                    (print list)
+                    (format t "~%")
+                    (funcall func serial str result fail-result)))) *list-command*)))
+
+(defun kill-input-thread()
+  (let ((process-list (all-processes)))
+    (loop for process in process-list
+          do
+             (when (search "Input Collect" (process-name process))
+               (process-kill process))
+       )))
 
 (progn
+  (kill-input-thread)
   (setq *serial-log* nil)
   (setq *serial-input-thread*  (process-run-function "Input Collect"
-                                                     'serial-log-collect *serial*))
-  (serial-force-output *serial* "ls init.rc")
+                                                     'serial-log-collect
+                                                     *serial*))
+  (sleep 1)
+  (wait-shell *serial* "" 60)
   (loop (serial-loop *serial*)))
