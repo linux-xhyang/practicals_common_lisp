@@ -15,6 +15,56 @@
 (defvar *loop-count* nil)
 (defvar *wdt-reset* nil)
 
+(defvar *key-list* (list (cons "Home" 3)
+                         (cons "Back" 4)
+                         (cons "down" 20)
+                         (cons "up" 19)
+                         (cons "left" 21)
+                         (cons "right" 22)
+                         (cons "enter" 66)
+                         (cons "sound+" 24)
+                         (cons "sound-" 25)
+                         (cons "power" 66)))
+
+(defvar *activity-list* (list
+                         (list "HDPPlayer" (cons "hdpfans.com/hdp.player.StartActivity"
+                               "hdpfans.com"))
+                         (list "desktop" (cons "com.xiaomi.tv.desktop/.ui.MainActivity"
+                               "com.xiaomi.tv.desktop"))
+                         (list "tvplayer" (cons "com.xiaomi.mitv.tvplayer/.AtvActivity"
+                               "com.xiaomi.mitv.tvplayer"))
+                         ))
+
+(setq *activity-list* (list
+                         (list "HDPPlayer" (cons "hdpfans.com/hdp.player.StartActivity"
+                               "hdpfans.com"))
+                         (list "desktop" (cons "com.xiaomi.tv.desktop/.ui.MainActivity"
+                               "com.xiaomi.tv.desktop"))
+                         (list "tvplayer" (cons "com.xiaomi.mitv.tvplayer/.AtvActivity"
+                               "com.xiaomi.mitv.tvplayer"))
+                         ))
+
+(defvar *list-command*
+  (list
+   (cons (list "Power down" "Power down" nil) 'power-callback)
+   (cons (list "<< MStar >>#" "<< MStar >>#" nil) 'mboot-callback)
+   (cons (list "Booting Linux" "Booting Linux" nil) 'startup-callback)
+   (cons (list "wdt_reset = "  "wdt_reset = 0" "wdt_reset = 1") 'wdt-detect)
+   (cons (list "shell@gladiator:/ " "[dev.bootcomplete]: [1]" "1|shell@gladiator:/ #") 'bootfinish-callback)
+   ))
+
+(defvar *list-string*
+  (list "Error: Activity" "* TaskRecord" "<< MStar >>#" "Emergency Remount" "Restarting system" "Power down" "Booting Linux" "wdt_reset = " "shell@gladiator:/ $"
+         "shell@gladiator:/ #" "[dev.bootcomplete]: [1]" "1|shell@gladiator:/ #"))
+
+(setq *list-string* (list "Error: Activity" "* TaskRecord" "<< MStar >>#" "Emergency Remount" "Restarting system" "Power down" "Booting Linux" "wdt_reset = " "shell@gladiator:/ $"
+         "shell@gladiator:/ #" "[dev.bootcomplete]: [1]" "1|shell@gladiator:/ #"))
+
+(defvar *filter-string*
+  (list "dumpsys" "su" "getprop" "grep" "svc power" "cpudvfsscaling"))
+
+(setq *filter-string* (list "dumpsys" "su" "getprop" "grep" "svc power" "cpudvfsscaling"))
+
 (setq *loop-count* 0)
 (setq *serial* (ccl::make-serial-stream "/dev/ttyUSB3"
                                         :baud-rate 115200
@@ -22,6 +72,25 @@
                                         :flow-control :none
                                         :stop-bits 1 t
                                         :external-format (ccl::make-external-format :line-termination :CRLF)))
+
+(defvar *test-case* (list
+                     ;;app-name (key list) period repeat
+                     (list "HDPPlayer"
+                           (list "up" "down") 100 6)
+                     (list "tvplayer"
+                           (list "up" "down" "right" "enter") 100 6)
+                     (list "desktop"
+                           (list "up" "down" "right" "enter" "back" "home") 10 10)
+                     ))
+(setq *test-case* (list
+                     ;;app-name (key list) period repeat
+                     (list "HDPPlayer"
+                           (list "up" "down") 100 6)
+                     (list "tvplayer"
+                           (list "up" "down" "right" "enter") 100 6)
+                     (list "desktop"
+                           (list "up" "down" "right" "enter" "back" "home") 10 10)
+                     ))
 
 (defun string-in-list (str)
   (loop for i in *list-string*
@@ -88,7 +157,7 @@
   (sleep 0.01)
   (format serial "~%")
   (force-output serial)
-  (format t "serial output ~a~%" str)
+  ;;(format t "serial output ~a~%" str)
   (sleep 1))
 
 (defun wait-shell (serial comm timeout)
@@ -135,18 +204,25 @@
         (return-from run nil)))))
 
 (defun serial-run (serial comm result fail-result repeat)
-  (loop while (>= repeat 0)
-        do
-           (serial-log-clear)
-           (let ((r (serial-run-program serial comm result fail-result)))
-             (if r
-                 (progn
-                   (serial-log-clear)
-                   (return r)))
-             (setq repeat (- repeat 1)))
-        ))
+  (format t "run command: ~a ~%" comm)
+  (when (wait-shell serial "" 10)
+    (loop while (>= repeat 0)
+          do
+             (serial-log-clear)
+             (let ((r (serial-run-program serial comm result fail-result)))
+               (if r
+                   (progn
+                     (sleep 1)
+                     (serial-log-clear)
+                     (return r)))
+               (setq repeat (- repeat 1)))
+          )))
 
-(defun serial-run-wait (serial comm result fail-result)
+(defun serial-run-wait (serial comm result fail-result &key error collect)
+  ;;success return result
+  ;;failed will rerun the command
+  ;;error handle used work error happen,ensure need redo comm
+  (format t "run command: ~a ~%" comm)
   (when (wait-shell serial "" 10)
     (serial-log-clear)
     (serial-force-output serial comm)
@@ -154,16 +230,29 @@
     (loop while t
           do
              (let ((s (serial-log-search result))
-                   (f (serial-log-search fail-result)))
-               (if f
+                   (f (if fail-result (serial-log-search fail-result) nil))
+                   (cont t))
+               (if (and f fail-result)
                    (progn
-                     (format t "failed,run second~%")
-                     (serial-log-clear)
-                     (serial-force-output serial comm)
-                     (sleep 2))
+                     (when error
+                       (setq cont (funcall error f)))
+                     (if cont
+                         (progn
+                           (format t "failed,run retry~%")
+                           (wait-shell serial "" 10)
+                           (serial-log-clear)
+                           (serial-force-output serial comm)
+                           (sleep 2))
+                         (progn
+                           (serial-log-clear)
+                           (return f)))
+                     )
                    (if s
                        (progn
-                         (format t "wait ~a success~%" result)
+                         (format t "wait ~a result ~a success~%" comm result)
+                         (when collect
+                           (setq s (funcall collect *serial-log*)))
+                         (serial-log-clear)
                          (return s))))
                )
           )))
@@ -182,41 +271,146 @@
     (setq *wdt-reset* t)
     (format t "wdt reset found~%")))
 
+(defun shutdown-machine (serial)
+  (format t "Now do reboot machine~%")
+  (serial-run-wait serial "svc power shutdown" "" "shell@gladiator:/ #")
+  )
+
+(defun search-key-by-name (key)
+  (loop for entry in *key-list*
+        do
+           (when (search key (car entry) :test #'char-equal)
+             (return entry))))
+
+(defun input-key-event (serial name)
+  (let* ((key (search-key-by-name name))
+         (comm nil))
+    (when key
+      (setq comm (format nil "input keyevent ~D" (cdr key)))
+      (format t "input key ~a ~%" name)
+      (serial-run-wait serial comm "shell@gladiator:/ #" nil)
+      )))
+
+(defun top-activity (serial)
+  (let* ((stack nil)
+        (result (serial-run-wait serial
+                                 "dumpsys activity activities |busybox grep \"* TaskRecord\""
+                                 "shell@gladiator:/ " nil
+                                 :collect #'(lambda (log)
+                                              (mapcar #'(lambda (entry)
+                                                          (when (search "* TaskRecord" entry :test #'char-equal)
+                                                            (push entry stack))) log)
+                                              ))))
+    (when result
+      (pop stack))))
+
+(defun start-activity (serial name result repeat)
+  (loop while (> repeat 0)
+        do
+           (let* ((comm (format nil "am start -n ~a" name))
+                 (ret (serial-run-wait serial comm "shell@gladiator:/ "
+                              "Error: Activity" :error #'(lambda (err)
+                                                    (when (search "Error: Activity" err :test #'char-equal)
+                                                      (format t "Error: Activity~%")
+                                                      nil
+                                                      )))))
+             (if (search "Error: Activity" ret :test #'char-equal )
+                 (progn
+                   (format t "~a not found,please check~%")
+                   (return nil))
+                 (progn
+                   (sleep 5)
+                   (when (search result (top-activity serial) :test #'char-equal)
+                     (return result))
+                   (format t "run app ~a [~a] failed~%" name result)
+                   (setq repeat (- repeat 1)))
+                 ))
+        ))
+
+(defun serial-run-app (serial name result)
+  ;;nil run app failed
+  ;;name, run app name
+  (let ((current (top-activity serial)))
+    (if (search name current :test #'char-equal)
+        (progn
+          (format t "~a is running on~%" name)
+          name)
+        (progn
+          (when (start-activity serial name result 5)
+            name
+            )))
+    ))
+
+(defun find-app (name)
+  (loop for app in *activity-list*
+        do
+           (when (search name (car app) :test #'char-equal)
+             (return (cadr app)))))
+
+(defun run-app (serial name)
+  (let ((app (find-app name)))
+    (when app
+        (serial-run-app serial (car app) (cdr app)))
+    )
+  )
+
+(defun get-random-from-list (list)
+  (let* ((state (make-random-state t))
+         (n (random (length list) state)))
+    (nth n list)
+    ))
+
+(defun random-number (n)
+  (let ((state (make-random-state t)))
+    (+ 1 (random n state))))
+
+(defun run-test-case (serial)
+  (let* ((case (get-random-from-list *test-case*))
+         (app (car case))
+         (key-list (cadr case))
+         (period (caddr case))
+         (repeat (random-number (cadddr case))))
+    (format t "run test case ~a period ~D repeat ~D~%" app period repeat)
+    (when (run-app serial app)
+      (loop repeat repeat
+            do
+               (sleep (random-number period))
+               (input-key-event serial (get-random-from-list key-list))
+               (sleep (random-number period))
+            ))))
+
+(defun start-serial-test (serial)
+  (format t "Start Test~%")
+  (loop repeat 3
+        do
+           (run-test-case serial))
+  (sleep 10)
+  (input-key-event serial "Home")
+  (shutdown-machine serial)
+  )
+
+(defun wdt-save-log (serial)
+  (let* ((save-file (format nil "/data/logs-~a"
+                            (get-universal-time)))
+         (prepare (format nil "mkdir -p ~a" save-file))
+         (comm (format nil "busybox cp /data/log ~a -rf" save-file)))
+    (serial-run serial prepare "shell@gladiator:/ #" "1|shell@gladiator:/ " 10)
+    (serial-run serial comm "shell@gladiator:/ #" "1|shell@gladiator:/ " 10)
+    )
+  )
+
 (defun bootfinish-callback (serial str result fail-result)
-  (format t "Machine shell start~%")
   (serial-run serial "su" "shell@gladiator:/ #" "shell@gladiator:/ $" 60)
   (serial-run serial "getprop | grep dev.bootcomplete" result fail-result 60)
-  (format t "Now do reboot machine~%")
-  (serial-run-wait serial "svc power shutdown" "" "shell@gladiator:/ #"))
+
+  (when  *wdt-reset*
+    (wdt-save-log serial)
+    )
+  (start-serial-test serial)
+  )
 
 (defun mboot-callback (serial str result fail-result)
   (serial-force-output serial "reset"))
-
-(defvar *list-command*
-  (list
-   (cons (list "Power down" "Power down" nil) 'power-callback)
-   (cons (list "<< MStar >>#" "<< MStar >>#" nil) 'mboot-callback)
-   (cons (list "Booting Linux" "Booting Linux" nil) 'startup-callback)
-   (cons (list "wdt_reset = "  "wdt_reset = 0" "wdt_reset = 1") 'wdt-detect)
-   (cons (list "shell@gladiator:/ " "[dev.bootcomplete]: [1]" "1|shell@gladiator:/ #") 'bootfinish-callback)
-   ))
-
-;; (setq *list-command* (list
-;;    (cons (list "Power down" "Power down" nil) 'power-callback)
-;;    (cons (list "<< MStar >>#" "<< MStar >>#" nil) 'mboot-callback)
-;;    (cons (list "Booting Linux" "Booting Linux" nil) 'startup-callback)
-;;    (cons (list "wdt_reset = "  "wdt_reset = 0" "wdt_reset = 1") 'wdt-detect)
-;;    (cons (list "shell@gladiator:/ " "[dev.bootcomplete]: [1]" "1|shell@gladiator:/ #") 'bootfinish-callback)
-;;    ))
-(defvar *list-string*
-  (list "<< MStar >>#" "Emergency Remount" "Restarting system" "Power down" "Booting Linux" "wdt_reset = " "shell@gladiator:/ $"
-         "shell@gladiator:/ #" "[dev.bootcomplete]: [1]" "1|shell@gladiator:/ #"))
-
-;; (setq *list-string* (list "<< MStar >>#" "Emergency Remount" "Restarting system" "Power down" "Booting Linux" "wdt_reset = " "shell@gladiator:/ $"
-;;          "shell@gladiator:/ #" "[dev.bootcomplete]: [1]" "1|shell@gladiator:/ #"))
-
-(defvar *filter-string*
-  (list "su" "getprop" "grep" "svc power"))
 
 (defun serial-loop (serial)
   (let ((str (serial-log-get -1)))
@@ -248,3 +442,7 @@
   (sleep 1)
   (wait-shell *serial* "" 60)
   (loop (serial-loop *serial*)))
+
+;;;;;TEST
+(serial-force-output *serial* "")
+(top-activity *serial*)
