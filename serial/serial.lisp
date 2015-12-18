@@ -316,7 +316,7 @@
                                                       )))))
              (if (search "Error: Activity" ret :test #'char-equal )
                  (progn
-                   (format t "~a not found,please check~%")
+                   (format t "~a not found,please check~%" name)
                    (return nil))
                  (progn
                    (sleep 5)
@@ -381,7 +381,7 @@
 
 (defun start-serial-test (serial)
   (format t "Start Test~%")
-  (loop repeat 3
+  (loop repeat 2
         do
            (run-test-case serial))
   (sleep 10)
