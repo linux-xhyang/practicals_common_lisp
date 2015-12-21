@@ -10,6 +10,7 @@
 
 (defvar *serial* nil)
 (defvar *serial-input-thread* nil)
+(defvar *serial-main-thread* nil)
 (defvar *shell-command-list* nil)
 (defvar *serial-log* nil)
 (defvar *loop-count* nil)
@@ -143,12 +144,18 @@
 (defun serial-log-clear()
   (setq *serial-log* nil))
 
-(defun serial-log-search (key)
+(defun serial-log-search (key &key timeout)
   (block log-search
     (loop for entry in *serial-log*
           do
           (when (search key entry :test #'char-equal)
             (return-from log-search entry))
+          (when timeout
+            (setq timeout (- timeout 1))
+            (sleep 1)
+            (if (<= timeout 0)
+                (return-from log-search nil))
+            )
           )))
 
 (defun serial-force-output (serial str)
@@ -218,7 +225,7 @@
                (setq repeat (- repeat 1)))
           )))
 
-(defun serial-run-wait (serial comm result fail-result &key error collect)
+(defun serial-run-wait (serial comm result fail-result &key error collect timeout)
   ;;success return result
   ;;failed will rerun the command
   ;;error handle used work error happen,ensure need redo comm
@@ -229,7 +236,7 @@
     (sleep 2)
     (loop while t
           do
-             (let ((s (serial-log-search result))
+             (let ((s (serial-log-search result :timeout timeout))
                    (f (if fail-result (serial-log-search fail-result) nil))
                    (cont t))
                (if (and f fail-result)
@@ -247,15 +254,24 @@
                            (serial-log-clear)
                            (return f)))
                      )
-                   (if s
+                   (if (or s timeout)
                        (progn
-                         (format t "wait ~a result ~a success~%" comm result)
-                         (when collect
-                           (setq s (funcall collect *serial-log*)))
-                         (serial-log-clear)
-                         (return s))))
-               )
-          )))
+                         (if s
+                             (progn
+                               (format t "wait ~a result ~a success~%" comm
+                                       result)
+                               (when collect
+                                 (setq s (funcall collect *serial-log*)))
+                               (serial-log-clear)
+                               (return s))
+                             (progn
+                               (format t "timeout,run retry~%")
+                               (wait-shell serial "" 10)
+                               (serial-log-clear)
+                               (serial-force-output serial comm)
+                               (sleep 2))
+                         ))))
+               ))))
 
 (defun power-callback (serial str result fail-result)
   (format t "Machine shut down~%"))
@@ -269,7 +285,8 @@
 (defun wdt-detect (serial str result fail-result)
   (when (search fail-result str :test #'char-equal)
     (setq *wdt-reset* t)
-    (format t "wdt reset found~%")))
+    (format t "wdt reset found~%"))
+  (wait-shell serial "" 300))
 
 (defun shutdown-machine (serial)
   (format t "Now do reboot machine~%")
@@ -300,7 +317,7 @@
                                               (mapcar #'(lambda (entry)
                                                           (when (search "* TaskRecord" entry :test #'char-equal)
                                                             (push entry stack))) log)
-                                              ))))
+                                              ) :timeout 60)))
     (when result
       (pop stack))))
 
@@ -313,7 +330,7 @@
                                                     (when (search "Error: Activity" err :test #'char-equal)
                                                       (format t "Error: Activity~%")
                                                       nil
-                                                      )))))
+                                                      )) :timeout 60)))
              (if (search "Error: Activity" ret :test #'char-equal )
                  (progn
                    (format t "~a not found,please check~%" name)
@@ -405,6 +422,7 @@
 
   (when  *wdt-reset*
     (wdt-save-log serial)
+    (setq *wdt-reset* nil)
     )
   (start-serial-test serial)
   )
@@ -425,24 +443,38 @@
                     (format t "~%")
                     (funcall func serial str result fail-result)))) *list-command*)))
 
-(defun kill-input-thread()
+(defun kill-thread()
   (let ((process-list (all-processes)))
+    (when *serial-input-thread*
+      (process-kill *serial-input-thread*)
+      (setq *serial-input-thread* nil))
+    (when *serial-main-thread*
+      (process-kill *serial-main-thread*)
+      (setq *serial-main-thread* nil))
     (loop for process in process-list
           do
-             (when (search "Input Collect" (process-name process))
+             (when (search "Input Collect" (process-name process) :test #'char-equal)
                (process-kill process))
        )))
 
-(progn
-  (kill-input-thread)
-  (setq *serial-log* nil)
-  (setq *serial-input-thread*  (process-run-function "Input Collect"
-                                                     'serial-log-collect
-                                                     *serial*))
-  (sleep 1)
-  (wait-shell *serial* "" 60)
-  (loop (serial-loop *serial*)))
+(defun serial_test_main_thread ()
+  (progn
+    (setq *serial-log* nil)
+    (setq *serial-input-thread*  (process-run-function "Input Collect"
+                                                       'serial-log-collect
+                                                       *serial*))
+    (sleep 1)
+    (wait-shell *serial* "" 60)
+    (loop (serial-loop *serial*))))
+
+(defun serial_test()
+  (kill-thread)
+  (setq *serial-main-thread* (process-run-function "Input Clollect Main"
+                                                 'serial_test_main_thread)))
+
+
+
 
 ;;;;;TEST
-(serial-force-output *serial* "")
-(top-activity *serial*)
+;;(serial-force-output *serial* "")
+;;(top-activity *serial*)
