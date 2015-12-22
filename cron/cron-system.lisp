@@ -46,13 +46,23 @@
         (external-program:signal-process proc :quit)))
     ))
 
-(defparameter *project-list*
-  (list
-   (list "inception" (list "/home/xhyang/src/Android-5.1/android/" "build_android_boot.sh")))
+(defparameter *project-list* nil
   )
 
 (defparameter *build-log* "/build-log.txt")
 (defparameter *build-job* nil)
+
+(defun save-job (filename)
+  (with-open-file (out filename
+                   :direction :output
+                   :if-exists :supersede)
+    (with-standard-io-syntax
+      (print *project-list* out))))
+
+(defun load-job (filename)
+  (with-open-file (in filename)
+    (with-standard-io-syntax
+      (setf *project-list* (read in)))))
 
 (defun build-system ()
   (mapcar #'(lambda (project)
@@ -72,6 +82,7 @@
           *project-list*))
 
 (defun start-cron-job()
+  (load-job "~/note/todo/jobs.l")
   (let ((build (cl-cron:make-cron-job #'build-system :hour 12 :minute 30)))
     (push build *build-job*)
     (cl-cron:start-cron)
@@ -84,4 +95,5 @@
            (cl-cron:delete-cron-job job)
            (pop *build-job*)
         )
+  (save-job "~/note/todo/jobs.l")
   )
