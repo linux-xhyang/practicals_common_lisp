@@ -172,7 +172,7 @@
   (sleep 0.1)
   (force-output serial)
   (sleep 1)
-  (serial-force-output serial "cd")
+  (serial-force-output serial "ls /init.rc")
   )
 
 (defun wait-shell (serial comm timeout)
