@@ -167,6 +167,14 @@
   ;;(format t "serial output ~a~%" str)
   (sleep 1))
 
+(defun serial-interrupt (serial)
+  (stream-write-char serial (code-char 3))
+  (sleep 0.1)
+  (force-output serial)
+  (sleep 1)
+  (serial-force-output serial "cd")
+  )
+
 (defun wait-shell (serial comm timeout)
   (loop while (>= timeout 0)
         do
@@ -246,6 +254,7 @@
                      (if cont
                          (progn
                            (format t "failed,run retry~%")
+                           (serial-interrupt serial)
                            (wait-shell serial "" 10)
                            (serial-log-clear)
                            (serial-force-output serial comm)
@@ -266,6 +275,7 @@
                                (return s))
                              (progn
                                (format t "timeout,run retry~%")
+                               (serial-interrupt serial)
                                (wait-shell serial "" 10)
                                (serial-log-clear)
                                (serial-force-output serial comm)
@@ -443,7 +453,18 @@
                     (format t "~%")
                     (funcall func serial str result fail-result)))) *list-command*)))
 
-(defun kill-thread()
+(defun serial-test-main-thread ()
+  (progn
+    (setq *serial-log* nil)
+    (setq *serial-input-thread*  (process-run-function "Input Collect"
+                                                       'serial-log-collect
+                                                       *serial*))
+    (sleep 1)
+    (wait-shell *serial* "" 60)
+    (loop (serial-loop *serial*))))
+
+
+(defun serial-kill-thread()
   (let ((process-list (all-processes)))
     (when *serial-input-thread*
       (process-kill *serial-input-thread*)
@@ -457,23 +478,10 @@
                (process-kill process))
        )))
 
-(defun serial_test_main_thread ()
-  (progn
-    (setq *serial-log* nil)
-    (setq *serial-input-thread*  (process-run-function "Input Collect"
-                                                       'serial-log-collect
-                                                       *serial*))
-    (sleep 1)
-    (wait-shell *serial* "" 60)
-    (loop (serial-loop *serial*))))
-
-(defun serial_test()
-  (kill-thread)
+(defun serial-test()
+  (serial-kill-thread)
   (setq *serial-main-thread* (process-run-function "Input Clollect Main"
-                                                 'serial_test_main_thread)))
-
-
-
+                                                 'serial-test-main-thread)))
 
 ;;;;;TEST
 ;;(serial-force-output *serial* "")

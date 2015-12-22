@@ -1,13 +1,13 @@
-(defpackage :cron-system (:use :asdf :cl))
-(in-package :cron-system)
+(defpackage :serial-test (:use :asdf :cl))
+(in-package :serial-test)
 
-(defsystem cron-job
-  :name "cron-job"
+(defsystem serial-test
+  :name "serial-test"
   :author "xhyang <linux.xhyang@gmail.com>"
   :version "1.0"
   :maintainer "xhyang <linux.xhyang@gmail.com>"
   :licence "BSD"
-  :description "Code For Cron-job"
+  :description "Code For Serial Test"
   :long-description ""
   :depends-on (:cl-cwd
                :iterate
@@ -16,4 +16,4 @@
                :external-program)
   :components
   ((:file "packages")
-   (:file "cron-system" :depends-on ("packages"))))
+   (:file "serial" :depends-on ("packages"))))

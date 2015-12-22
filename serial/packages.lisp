@@ -1,6 +1,6 @@
 (in-package :cl-user)
 
-(defpackage :cron-system
+(defpackage :serial-test
   (:use
    :common-lisp
    :iterate
@@ -8,5 +8,5 @@
    :cl-cron
    :external-program
    )
-  (:export :start-cron-job
-           :stop-cron-job))
+  (:export :serial-test
+           ))
