@@ -28,6 +28,7 @@
           )
       (simple-error (c)
         (declare (ignore c))
+        (format t "~D" c)
         (external-program:signal-process proc :quit)))
     ))
 
@@ -83,7 +84,7 @@
 
 (defun start-cron-job()
   (load-job "~/note/todo/jobs.l")
-  (let ((build (cl-cron:make-cron-job #'build-system :hour 12 :minute 30)))
+  (let ((build (cl-cron:make-cron-job #'build-system :hour 1 :minute 30)))
     (push build *build-job*)
     (cl-cron:start-cron)
     ))
