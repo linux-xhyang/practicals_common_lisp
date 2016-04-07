@@ -8,14 +8,14 @@
 
 (defun make-silent-song (title &optional (file *silence-mp3*))
   (make-instance
-   'song 
+   'song
    :file file
    :title title
    :id3-size (if (id3-p file) (size (read-id3 file)) 0)))
 
-(defparameter *empty-playlist-song* (make-silent-song "Playlist empty."))
+(defparameter *empty-playlist-song* nil);(make-silent-song "Playlist empty.")
 
-(defparameter *end-of-playlist-song* (make-silent-song "At end of playlist."))
+(defparameter *end-of-playlist-song* nil );(make-silent-song "At end of playlist.")
 
 (defclass playlist ()
   ((id           :accessor id           :initarg :id)
@@ -98,7 +98,7 @@
 
 (defun reset-current-song (playlist)
   (setf
-   (current-song playlist) 
+   (current-song playlist)
    (cond
      ((empty-p playlist) *empty-playlist-song*)
      ((at-end-p playlist) *end-of-playlist-song*)
@@ -120,7 +120,7 @@
 
 (defun add-songs (playlist column-name values)
   (let ((table (make-instance
-                'table 
+                'table
                 :schema (extract-schema (list column-name) (schema *mp3s*)))))
     (dolist (v values) (insert-row (list column-name v) table))
     (do-rows (row (select :from *mp3s* :where (in column-name table)))
@@ -133,7 +133,7 @@
    :where (apply #'matching (songs-table playlist) names-and-values))
   (setf (current-idx playlist) (or (position-of-current playlist) 0))
   (update-current-if-necessary playlist))
-  
+
 (defun clear-playlist (playlist)
   (delete-all-rows (songs-table playlist))
   (setf (current-idx playlist) 0)
@@ -191,7 +191,7 @@
     (setf (songs-table playlist) new-table)))
 
 (defun shuffled-album-names (playlist)
-  (shuffle-table 
+  (shuffle-table
    (select
     :columns :album
     :from (songs-table playlist)
@@ -199,11 +199,6 @@
 
 (defun songs-for-album (playlist album)
   (select
-   :from (songs-table playlist) 
+   :from (songs-table playlist)
    :where (matching (songs-table playlist) :album album)
    :order-by :track))
-
-
-
-
-

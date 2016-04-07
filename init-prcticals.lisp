@@ -19,6 +19,6 @@
 (format t "~&~%* Initializing Practicals.")
 (format t "~%  The Practicals path is: ~a" (directory-namestring *practicals-path*))
 
-;;(maphash #'(lambda (k v) (print (list k v))) asdf:*source-registry*)
+;;(maphash #'(lambda (k v) (print (list k v))) asdf/source-registry:*source-registry*)
 
 ;;(asdf:operate 'asdf:load-op :id3v2 :practicals t)

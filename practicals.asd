@@ -10,18 +10,17 @@
     :maintainer "Peter Seibel <peter@gigamonkeys.com>"
     :licence "BSD"
     :description "All code from Practical Common Lisp."
-    :depends-on 
+    :depends-on
     (:binary-data
      :html
+     :pathnames
      :id3v2
      :macro-utilities
-     :mp3-browser
      :mp3-database
-     :pathnames
+     :url-function
      :shoutcast
+     :mp3-browser
      :simple-database
      :spam
      :test-framework
-     :url-function))
-
-        
+     ))
