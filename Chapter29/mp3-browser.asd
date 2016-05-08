@@ -18,7 +18,5 @@
   ((:file "packages")
    (:file "playlist" :depends-on ("packages"))
    (:file "mp3-browser" :depends-on ("packages" "playlist"))
-   (:css-file "mp3-browser"))
+   (:css-file "mp3-browser-css"))
   :depends-on (:id3v2 :mp3-database :shoutcast :url-function :html))
-
-        
