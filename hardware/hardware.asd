@@ -9,4 +9,4 @@
                ;;(:file "wireless")
                )
   :depends-on (:utilities :split-sequence :cl-fad :anaphora :cffi :iterate
-               :alexandria))
+               :alexandria :inquisitor))
